@@ -5,7 +5,7 @@
 Adapters control how DSPy formats messages to/from LMs. They're usually handled automatically, but you can override them.
 
 ```python
-from dspy.adapters import ChatAdapter, JSONAdapter, XMLAdapter, BAMLAdapter
+from dspy.adapters import ChatAdapter, JSONAdapter, XMLAdapter, TwoStepAdapter
 
 # ChatAdapter — default for chat models, uses conversational turn format
 dspy.configure(adapter=ChatAdapter())
@@ -26,6 +26,8 @@ dspy.configure(adapter=XMLAdapter())
 
 # BAMLAdapter (3.0+) — uses BAML format instead of JSON schema for structured outputs
 # Better quality for complex nested types; does NOT support streaming
+# NOTE: BAMLAdapter is NOT in the default exports; import explicitly:
+from dspy.adapters.baml_adapter import BAMLAdapter
 dspy.configure(adapter=BAMLAdapter())
 
 # Per-call adapter override via context manager
@@ -81,7 +83,10 @@ stream_program = dspy.streamify(
     include_final_prediction_in_output_stream=True,
     is_async_program=False,    # True if module uses aforward()
     async_streaming=True,      # False = return sync generator (no asyncio needed)
+    status_message_provider=None,  # optional callback for status messages
 )
+# StreamListener full init:
+# StreamListener(signature_field_name, predict=None, predict_name=None, allow_reuse=False)
 
 # Async usage:
 async def stream_async():
@@ -168,10 +173,18 @@ Callbacks hook into the LM call lifecycle for logging, monitoring, and custom be
 from dspy.utils.callback import BaseCallback
 
 class LoggingCallback(BaseCallback):
+    # Module lifecycle
+    def on_module_start(self, call_id, instance, inputs):
+        """Called before each Module forward pass."""
+        pass
+    def on_module_end(self, call_id, outputs, exception):
+        """Called after each Module forward pass."""
+        pass
+
+    # LM lifecycle
     def on_lm_start(self, call_id, instance, inputs):
         """Called before each LM request."""
         print(f"LM call starting: {inputs}")
-
     def on_lm_end(self, call_id, outputs, exception):
         """Called after each LM request."""
         if exception:
@@ -179,12 +192,30 @@ class LoggingCallback(BaseCallback):
         else:
             print(f"LM call succeeded: {outputs}")
 
-    def on_module_start(self, call_id, instance, inputs):
-        """Called before each Module forward pass."""
+    # Adapter lifecycle
+    def on_adapter_format_start(self, call_id, instance, inputs):
+        """Called before adapter format() — message construction."""
+        pass
+    def on_adapter_format_end(self, call_id, outputs, exception):
+        pass
+    def on_adapter_parse_start(self, call_id, instance, inputs):
+        """Called before adapter parse() — output extraction."""
+        pass
+    def on_adapter_parse_end(self, call_id, outputs, exception):
         pass
 
-    def on_module_end(self, call_id, outputs, exception):
-        """Called after each Module forward pass."""
+    # Tool lifecycle
+    def on_tool_start(self, call_id, instance, inputs):
+        """Called before tool execution."""
+        pass
+    def on_tool_end(self, call_id, outputs, exception):
+        pass
+
+    # Evaluation lifecycle
+    def on_evaluate_start(self, call_id, instance, inputs):
+        """Called before Evaluate runs."""
+        pass
+    def on_evaluate_end(self, call_id, outputs, exception):
         pass
 
 # Attach callback to LM
@@ -354,6 +385,48 @@ class RAG(dspy.Module):
 
 **Note:** Requires `pip install faiss-cpu` unless `brute_force_threshold` is set.
 
+**Persistence for Embeddings retriever:**
+```python
+# Save index to disk
+search.save("my_index/")
+
+# Load from disk
+search = dspy.retrievers.Embeddings.__new__(dspy.retrievers.Embeddings)
+search.load("my_index/", embedder=embedder)
+
+# Or use class method
+search = dspy.retrievers.Embeddings.from_saved("my_index/", embedder=embedder)
+```
+
+### DatabricksRM — Databricks Vector Search retriever
+
+```python
+from dspy.retrievers.databricks_rm import DatabricksRM
+
+retriever = DatabricksRM(
+    databricks_index_name="my_catalog.my_schema.my_index",
+    k=3,
+    text_column_name="content",
+    docs_id_column_name="id",
+)
+results = retriever("semantic search query", query_type="ANN")  # or "HYBRID"
+# Returns: dspy.Prediction(docs=[...], doc_ids=[...])
+```
+
+### WeaviateRM — Weaviate vector database retriever
+
+```python
+from dspy.retrievers.weaviate_rm import WeaviateRM
+
+retriever = WeaviateRM(
+    weaviate_collection_name="MyCollection",
+    weaviate_client=weaviate_client,  # v3 or v4 client
+    weaviate_collection_text_key="content",
+    k=3,
+)
+results = retriever("semantic search query")
+```
+
 ### PythonInterpreter (requires Deno)
 
 ```python
@@ -465,6 +538,9 @@ dspy.configure(
     callbacks=[...],                      # global callbacks
     max_errors=10,                        # max errors in Evaluate
     trace=[],                             # enable tracing
+    track_usage=True,                     # enable token tracking
+    allow_tool_async_sync_conversion=True,# allow async tools in sync
+    experimental=True,                    # BetterTogether, BootstrapFinetune
 )
 
 # Access settings
@@ -483,15 +559,37 @@ module.predictor.lm = dspy.LM('openai/gpt-4o')
 lm = dspy.LM('openai/gpt-4o-mini', cache=False)
 
 # Save and load DSPy settings (3.1.1+)
-# Useful for persisting LM config, adapter choice, and callbacks across runs
 dspy.settings.save("dspy_settings.json")
-dspy.settings.load("dspy_settings.json")
+dspy.settings.load("dspy_settings.json")  # also: dspy.load_settings(...)
 
 # Configure cache explicitly
 dspy.configure_cache(
-    enable_disk_cache=True,   # persist cache to disk
-    enable_memory_cache=True, # in-memory cache layer
+    enable_disk_cache=True,     # persist cache to disk
+    enable_memory_cache=True,   # in-memory cache layer
+    cache_dir=None,             # custom cache directory
+    disk_size_limit=30*1024**3, # disk size limit (default 30 GB)
+    max_memory_entries=1_000_000, # max in-memory entries
 )
+
+# Logging control
+dspy.enable_logging()                  # enable DSPy logging
+dspy.disable_logging()                 # disable DSPy logging
+dspy.configure_dspy_loggers()          # fine-grained logger config
+dspy.enable_litellm_logging()          # enable LiteLLM debug logging
+dspy.disable_litellm_logging()         # disable LiteLLM logging (default)
+
+# Sync/async conversion utilities
+async_module = dspy.asyncify(sync_module)   # wrap sync for async
+sync_module = dspy.syncify(async_module)    # wrap async for sync
+
+# Token usage tracking — context manager
+with dspy.track_usage() as tracker:
+    result = program(question="test")
+    print(tracker.get_total_tokens())
+
+# DummyLM for testing (no API calls)
+from dspy.utils import DummyLM
+dspy.configure(lm=DummyLM(["expected answer 1", "expected answer 2"]))
 ```
 
 ---
