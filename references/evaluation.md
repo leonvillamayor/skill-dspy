@@ -105,12 +105,20 @@ metric = dspy.SemanticF1(
 )
 score = metric(example, pred)   # returns float 0-1
 
-# Usage example
-evaluator = dspy.Evaluate(
-    devset=devset,
-    metric=dspy.SemanticF1(decompositional=True),
-    num_threads=8,
-)
+# CompleteAndGrounded — evaluates completeness + groundedness for RAG
+# Expects: example.question, example.response, pred.response, pred.context
+metric = dspy.CompleteAndGrounded(threshold=0.66)
+score = metric(example, pred)   # F1 of completeness and groundedness
+
+# EM — alias for exact match
+dspy.evaluate.EM  # same as answer_exact_match
+
+# normalize_text — utility for text comparison
+dspy.evaluate.normalize_text("Hello, World!!")  # "hello world"
+
+# GSM8K built-in metric
+from dspy.datasets.gsm8k import gsm8k_metric
+gsm8k_metric(gold, pred)  # compares parsed integer answers
 
 # Multi-reference answers work with answer_exact_match:
 example = dspy.Example(answer=["Paris", "The city of Paris"])
@@ -138,7 +146,31 @@ trainset, devset = dataset.train, dataset.dev
 from dspy.datasets.math import MATH
 dataset = MATH()
 
-# Prepare custom dataset
+# Colors dataset (~140 matplotlib color names, 60/40 split)
+from dspy.datasets import Colors
+dataset = Colors(sort_by_suffix=True)
+trainset, devset = dataset.train, dataset.dev
+
+# DataLoader — universal data loading
+from dspy.datasets import DataLoader
+loader = DataLoader()
+dataset = loader.from_huggingface("dataset_name", split="train",
+                                   fields=["question", "answer"], input_keys=["question"])
+dataset = loader.from_csv("data.csv", fields=["q", "a"], input_keys=["q"])
+dataset = loader.from_json("data.json")
+dataset = loader.from_parquet("data.parquet")
+dataset = loader.from_pandas(df, fields=["col1", "col2"])
+train, test = loader.train_test_split(dataset, train_size=0.8)
+sample = loader.sample(dataset, n=50)
+
+# Dataset base class — for custom dataset classes
+from dspy.datasets import Dataset
+class MyDataset(Dataset):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        # self.train, self.dev, self.test = ...
+
+# Prepare custom dataset (simple)
 examples = [
     dspy.Example(question="What is 2+2?", answer="4").with_inputs("question"),
     dspy.Example(question="What is 3*3?", answer="9").with_inputs("question"),
@@ -147,77 +179,39 @@ examples = [
 
 ---
 
-## dspy.Assert and dspy.Suggest
+## Runtime Constraints (formerly Assertions)
 
-Constrain LM outputs with runtime assertions. DSPy automatically retries with feedback when constraints fail.
+**`dspy.Assert` and `dspy.Suggest` were deprecated in DSPy 3.x.** Use `dspy.Refine` and `dspy.BestOfN` instead.
 
-### dspy.Assert (hard constraint)
-Raises `dspy.primitives.assertions.DSPyAssertionError` if the condition fails after max retries.
-
-```python
-class FactualAnswer(dspy.Module):
-    def __init__(self):
-        self.answer = dspy.ChainOfThought("question -> answer, sources: list[str]")
-
-    def forward(self, question):
-        pred = self.answer(question=question)
-
-        # Hard constraint: must have at least one source
-        dspy.Assert(
-            len(pred.sources) >= 1,
-            "You must provide at least one source for your answer."
-        )
-
-        # Hard constraint: answer must be substantive
-        dspy.Assert(
-            len(pred.answer.split()) >= 5,
-            "Answer must be at least 5 words long."
-        )
-
-        return pred
-```
-
-### dspy.Suggest (soft constraint)
-Logs a warning and provides feedback but does not raise an exception.
+### dspy.Refine — Iterative improvement with feedback (replaces Assert)
+After each failed attempt, DSPy generates hints ("Past Output" + "Instruction" fields) for the next run.
 
 ```python
-class QualityAnswer(dspy.Module):
-    def __init__(self):
-        self.answer = dspy.ChainOfThought("question -> answer")
+def quality_check(example, pred, trace=None):
+    has_sources = len(pred.sources) >= 1
+    is_substantive = len(pred.answer.split()) >= 5
+    return has_sources and is_substantive
 
-    def forward(self, question):
-        pred = self.answer(question=question)
-
-        # Soft: suggest without enforcing
-        dspy.Suggest(
-            "?" not in pred.answer,
-            "The answer should be definitive, not a question."
-        )
-
-        dspy.Suggest(
-            len(pred.answer.split()) >= 10,
-            "Consider providing a more detailed answer."
-        )
-
-        return pred
-```
-
-### Assertion configuration
-
-```python
-# Control max retries globally
-dspy.configure(max_errors=5)
-
-# Programmatic backtracking wrapper (alternative to inline dspy.Assert):
-from dspy.primitives.assertions import assert_transform_module, backtrack_handler
-
-module_with_assertions = assert_transform_module(
-    MyModule(),
-    backtrack_handler,
-    max_backtracks=3   # number of retry attempts per assertion failure
+refine = dspy.Refine(
+    dspy.ChainOfThought("question -> answer, sources: list[str]"),
+    N=3,              # max retry attempts with feedback
+    reward_fn=quality_check,
+    threshold=1.0,    # minimum reward to accept
 )
-# This wraps the module so assertions trigger automatic retries with feedback,
-# without needing to inline dspy.Assert/dspy.Suggest in your forward() method.
+result = refine(question="What causes tides?")
+```
+
+### dspy.BestOfN — Independent sampling (replaces Suggest)
+N independent runs, picks best. No feedback between attempts.
+
+```python
+bon = dspy.BestOfN(
+    dspy.ChainOfThought("question -> answer"),
+    N=5,
+    reward_fn=quality_check,
+    threshold=1.0,
+)
+result = bon(question="What causes tides?")
 ```
 
 ---
