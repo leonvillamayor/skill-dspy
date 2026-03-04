@@ -2,6 +2,26 @@
 
 Optimizers automatically improve your DSPy programs by tuning prompts, few-shot examples, and/or LM weights.
 
+## Table of Contents
+- [How to Choose an Optimizer](#how-to-choose-an-optimizer)
+- [LabeledFewShot](#labeledfewshot)
+- [BootstrapFewShot](#bootstrapfewshot)
+- [BootstrapFewShotWithRandomSearch](#bootstrapfewshotwithrandomsearch)
+- [BootstrapFewShotWithOptuna](#bootstrapfewshotwithoptuna)
+- [AvatarOptimizer](#avataroptimizer)
+- [InferRules](#inferrules)
+- [MIPROv2 (recommended default)](#miprov2-recommended-default)
+- [COPRO](#copro-coordinate-ascent-prompt-optimizer)
+- [SIMBA](#simba-stochastic-introspective-mini-batch-adaptation)
+- [GEPA](#gepa-generalized-evolutionary-prompting-algorithm)
+- [KNNFewShot](#knnfewshot)
+- [Ensemble](#ensemble)
+- [BootstrapFinetune](#bootstrapfinetune)
+- [BetterTogether (Experimental)](#bettertogether-experimental)
+- [Optimization Best Practices](#optimization-best-practices)
+
+---
+
 ## How to Choose an Optimizer
 
 ```
