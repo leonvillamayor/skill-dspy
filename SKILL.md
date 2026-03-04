@@ -1,6 +1,6 @@
 ---
 name: skill-dspy
-description: "Expert guide for building AI programs with DSPy — the declarative framework for LM programming with automatic prompt optimization. Use this skill PROACTIVELY whenever: importing dspy, using Signatures/Modules/Optimizers, building RAG/agent/multi-hop pipelines, optimizing with BootstrapFewShot/MIPROv2/COPRO/SIMBA/GEPA/BetterTogether, writing dspy.ChainOfThought/ReAct/Predict/CodeAct, evaluating with dspy.Evaluate, using dspy.Assert/Suggest, configuring any LM provider (OpenAI/Anthropic/Gemini/Ollama/reasoning models), saving/loading compiled programs, integrating MCP tools (stdio or HTTP), streaming, async modules, tracking token usage, or debugging with inspect_history. Covers: LM config, Signatures, Modules, Optimizers, Evaluation, Assertions, Tools, Adapters, Streaming, Async, Callbacks, Embeddings, and Save/Load."
+description: "Expert guide for building AI programs with DSPy — the declarative framework for LM programming with automatic prompt optimization. Use this skill PROACTIVELY whenever: importing dspy, using Signatures/Modules/Optimizers, building RAG/agent/multi-hop pipelines, optimizing with BootstrapFewShot/MIPROv2/COPRO/SIMBA/GEPA/BetterTogether, writing dspy.ChainOfThought/ReAct/Predict/CodeAct, evaluating with dspy.Evaluate, using dspy.Refine/BestOfN for runtime constraints, configuring any LM provider (OpenAI/Anthropic/Gemini/Ollama/reasoning models), saving/loading compiled programs, integrating MCP tools (stdio or HTTP), streaming, async modules, tracking token usage, or debugging with inspect_history. Covers: LM config, Signatures, Modules, Optimizers, Evaluation, Runtime Constraints, Tools, Adapters, Streaming, Async, Callbacks, Embeddings, Retrievers, and Save/Load."
 license: MIT
 metadata:
   author: skill-dspy
@@ -119,17 +119,43 @@ class RAGAnswer(dspy.Signature):
 
 ### Signature manipulation
 ```python
-# Extend with new fields
+# Append a field at the end
 ExtendedSig = MySignature.append("new_output", dspy.OutputField(desc="..."), type_=str)
+
+# Prepend a field at the beginning
+PrependedSig = MySignature.prepend("context", dspy.InputField(desc="context"), type_=str)
+
+# Insert at specific position
+InsertedSig = MySignature.insert(1, "hint", dspy.InputField(desc="hint"), type_=str)
+
+# Delete a field
+TrimmedSig = MySignature.delete("unused_field")
 
 # Update field descriptions
 UpdatedSig = MySignature.with_updated_fields("answer", desc="detailed explanation")
 
 # Add instructions
 InstructedSig = MySignature.with_instructions("Always respond in Spanish.")
+
+# Compare two signatures
+MySignature.equals(OtherSignature)  # compares JSON schema
+
+# Create signature programmatically (no class definition needed)
+from dspy.signatures import make_signature
+DynamicSig = make_signature(
+    {"question": dspy.InputField(), "answer": dspy.OutputField()},
+    instructions="Answer the question."
+)
+
+# Access field dictionaries
+sig.input_fields   # dict of InputField instances
+sig.output_fields  # dict of OutputField instances
+sig.fields         # combined dict
 ```
 
 **Supported field types:** `str`, `int`, `float`, `bool`, `list[T]`, `dict[K,V]`, `Optional[T]`, `Union[T,U]`, `Literal[...]`, `dspy.Image`, `dspy.Audio`, `dspy.History`, `dspy.Code`, `dspy.File`, custom Pydantic models.
+
+**Field parameters:** `desc` (description), `prefix` (display name), `format` (formatter function), `parser` (output parser function), plus all Pydantic `Field` validators (`gt`, `min_length`, etc.).
 
 **`dspy.Code` — typed code output:**
 ```python
@@ -166,13 +192,14 @@ All modules inherit from `dspy.Module`. Use them directly or compose them.
 | `dspy.Predict` | Single LM call | Simple extraction, classification |
 | `dspy.ChainOfThought` | CoT reasoning | Multi-step reasoning, explanation |
 | `dspy.ProgramOfThought` | Code-based reasoning (needs Deno) | Math, symbolic computation |
-| `dspy.ReAct` | Tool-use agent loop | Search, APIs, multi-tool agents |
+| `dspy.ReAct` | Tool-use agent loop (max_iters=20) | Search, APIs, multi-tool agents |
 | `dspy.CodeAct` | Python code execution (pure fns only) | Complex computations via code |
 | `dspy.RLM` | Recursive LM — explores large contexts via REPL | Long documents, complex analysis (3.1.1+) |
-| `dspy.MultiChainComparison` | Ensemble of CoT chains | High-accuracy QA |
+| `dspy.MultiChainComparison` | Ensemble of CoT chains (M=3, temperature=0.7) | High-accuracy QA |
 | `dspy.Refine` | Iterative refinement with feedback | Quality improvement loops |
 | `dspy.BestOfN` | Sample N independently, pick best | Reliability via sampling |
 | `dspy.Parallel` | Run modules in parallel | Batch processing |
+| `dspy.KNN` | K-nearest neighbor example retrieval | Dynamic demo selection |
 
 **`dspy.BestOfN` vs `dspy.Refine`:**
 - `BestOfN(module, N=5, reward_fn=fn, threshold=1.0)` — N **independent** runs, picks the best. No feedback between attempts.
@@ -180,13 +207,16 @@ All modules inherit from `dspy.Module`. Use them directly or compose them.
 
 **`dspy.CodeAct` constraint:** only pure Python functions as tools — no lambdas, callable objects, or external libraries:
 ```python
-from dspy.predict import CodeAct   # note: not dspy.CodeAct directly
-act = CodeAct("n -> factorial_result", tools=[factorial_fn], max_iters=3)
+act = dspy.CodeAct("n -> factorial_result", tools=[factorial_fn], max_iters=5, interpreter=None)
+# max_iters default is 5; interpreter accepts a CodeInterpreter instance (defaults to PythonInterpreter)
 ```
 
 **`dspy.Parallel` full API (3.1.2: `timeout` and `straggler_limit` now exposed):**
 ```python
-parallel = dspy.Parallel(num_threads=8, timeout=120, straggler_limit=0.9, return_failed_examples=False)
+parallel = dspy.Parallel(
+    num_threads=8, timeout=120, straggler_limit=3,  # straggler_limit is int (default 3)
+    return_failed_examples=False, provide_traceback=None, disable_progress_bar=False,
+)
 results = parallel([(module, example1), (module, example2)])
 
 # Convenience: every dspy.Module has .batch()
@@ -209,10 +239,16 @@ print(result.trajectory)       # list of {code, output} steps
 ```
 Built-in REPL tools: `llm_query(prompt)`, `llm_query_batched(prompts)`, `SUBMIT(...)`. Also supports `aforward()` for async.
 
-**`dspy.LocalSandbox` for code execution:**
+**`dspy.PythonInterpreter` for code execution (requires Deno):**
 ```python
-sandbox = dspy.LocalSandbox()
-result = sandbox.execute("value = 2*5 + 4\nvalue")  # returns 14
+with dspy.PythonInterpreter() as interp:
+    result = interp.execute("value = 2*5 + 4\nvalue")  # returns 14
+```
+
+**`dspy.KNN` — dynamic example retrieval:**
+```python
+knn = dspy.KNN(k=3, trainset=trainset, vectorizer=dspy.Embedder('openai/text-embedding-3-small'))
+nearest = knn(question="What is DSPy?")  # returns k nearest training examples
 ```
 
 ### Usage examples
@@ -277,13 +313,20 @@ class MultiHopRAG(dspy.Module):
 ```
 
 **Module API:**
-- `module.forward(**kwargs)` — main logic
-- `module(...)` — calls forward
-- `module.named_predictors()` — iterate over all sub-predictors
-- `module.set_lm(lm)` — set LM for all predictors
+- `module.forward(**kwargs)` / `module.aforward(**kwargs)` — sync/async main logic
+- `module(...)` / `module.acall(...)` — sync/async calls
+- `module.named_predictors()` — iterate over all sub-predictors as (name, pred) tuples
+- `module.predictors()` — list of all Predict instances (no names)
+- `module.set_lm(lm)` / `module.get_lm()` — set/get LM (get raises ValueError if multiple)
+- `module.map_named_predictors(func)` — apply function to all predictors, returns self
 - `module.deepcopy()` — deep copy the module
 - `module.reset_copy()` — copy with reset state
 - `module.save(path)` / `module.load(path)` — persistence
+- `module.dump_state()` / `module.load_state(state)` — low-level state serialization
+- `module.named_parameters()` — all (name, param) tuples
+- `module.named_sub_modules(type_=None)` — iterate sub-modules
+- `module.inspect_history(n=1)` — per-module LM call history
+- `module.batch(examples, num_threads=...)` — parallel batch processing
 
 ---
 
@@ -298,15 +341,31 @@ example = example.with_inputs("question")
 print(example.inputs())   # {'question': ...}
 print(example.labels())   # {'answer': ...}
 
-# dspy.Prediction — module output container
+# Additional Example methods
+example.copy(answer="updated")   # copy with overrides
+example.without("answer")        # remove keys
+example.toDict()                 # convert to dict
+example.keys(), example.values(), example.items()  # dict-like iteration
+
+# dspy.Prediction — module output container (supports arithmetic for metrics)
 pred = dspy.Prediction(answer="42", reasoning="step by step...")
 print(pred.answer)
+print(pred.get_lm_usage())       # token usage if track_usage=True
+pred.completions                  # raw completions property
+Prediction.from_completions(list_or_dict, signature=None)  # class method
 
 # Load built-in datasets
-from dspy.datasets import HotPotQA, GSM8K
+from dspy.datasets import HotPotQA, GSM8K, MATH, Colors, DataLoader
 hotpotqa = HotPotQA(train_seed=2024, train_size=500)
 trainset = hotpotqa.train
 devset = hotpotqa.dev
+
+# DataLoader — universal data loading
+loader = DataLoader()
+dataset = loader.from_huggingface("dataset_name", split="train")
+dataset = loader.from_csv("data.csv", fields=["question", "answer"], input_keys=["question"])
+dataset = loader.from_json("data.json")
+dataset = loader.from_parquet("data.parquet")
 ```
 
 ---
@@ -317,17 +376,20 @@ See `references/optimizers.md` for full details. Quick reference:
 
 | Optimizer | Best For | Data Needed | Notes |
 |-----------|----------|-------------|-------|
+| `LabeledFewShot` | Direct labeled demos, simplest | Any size | Just assigns k random demos |
 | `BootstrapFewShot` | Few-shot demos, fast | 5-50 examples | |
-| `BootstrapFewShotWithRandomSearch` | Better few-shot selection | ~50-200 examples | |
+| `BootstrapFewShotWithRandomSearch` | Better few-shot selection | ~50-200 examples | Alias: `BootstrapRS` |
+| `BootstrapFewShotWithOptuna` | Bayesian demo selection | ~50-200 examples | Requires `pip install optuna` |
 | `MIPROv2` | Full prompt + demo optimization | 50-300 examples | **Default recommendation** |
 | `COPRO` | Instruction-only optimization | 20-100 examples | |
 | `SIMBA` | Mini-batch stochastic optimization | 20-200 examples | Faster for large programs |
 | `GEPA` | Evolutionary prompt optimization | 50+ examples | 5-arg metric required |
+| `AvatarOptimizer` | Iterative instruction improvement | 20-100 examples | Positive/negative comparison |
+| `InferRules` | Rule discovery from examples | 20-100 examples | Induces NL rules into instructions |
 | `BetterTogether` | Prompt + weight joint optimization | 100+ examples | Requires `experimental=True` |
 | `KNNFewShot` | Dynamic example retrieval | Training set | |
 | `Ensemble` | Combine multiple programs | Multiple programs | |
 | `BootstrapFinetune` | Fine-tuning LM weights | 100+ examples | Requires `experimental=True` |
-| `ArborGRPO` | Reinforcement learning / GRPO | 100+ examples | `pip install arbor-ai`; multi-module RL |
 
 **GEPA critical note — its metric must accept 5 arguments:**
 ```python
@@ -373,38 +435,35 @@ evaluator = dspy.Evaluate(
 score = evaluator(my_program)  # returns EvaluationResult
 
 # Built-in metrics
-dspy.evaluate.answer_exact_match
+dspy.evaluate.answer_exact_match    # also: dspy.evaluate.EM (alias)
 dspy.evaluate.answer_passage_match
-dspy.SemanticF1()
+dspy.SemanticF1()                   # LLM-based semantic comparison
+dspy.CompleteAndGrounded()          # completeness + groundedness for RAG
 ```
 
 ---
 
-## 8. Assertions
+## 8. Runtime Constraints
 
-Constrain LM output at runtime — DSPy retries if constraints fail:
+**Note:** `dspy.Assert` and `dspy.Suggest` were deprecated in DSPy 3.x. Use `dspy.Refine` and `dspy.BestOfN` instead.
 
 ```python
-class SafeAnswer(dspy.Module):
-    def __init__(self):
-        self.generate = dspy.ChainOfThought("question -> answer, confidence")
+# Refine — iterative improvement with automatic feedback (replaces Assert/Suggest)
+def quality_check(example, pred, trace=None):
+    return len(pred.answer) > 10 and float(pred.confidence) > 0.7
 
-    def forward(self, question):
-        pred = self.generate(question=question)
+refine = dspy.Refine(
+    dspy.ChainOfThought("question -> answer, confidence"),
+    N=3, reward_fn=quality_check, threshold=1.0,
+)
+result = refine(question="...")
 
-        # Hard constraint — raises BacktrackingException if fails
-        dspy.Assert(
-            len(pred.answer) > 10,
-            "Answer must be at least 10 characters"
-        )
-
-        # Soft constraint — logs warning, continues
-        dspy.Suggest(
-            float(pred.confidence) > 0.7,
-            "Aim for higher confidence in your answer"
-        )
-
-        return pred
+# BestOfN — sample N, pick best (no feedback between attempts)
+bon = dspy.BestOfN(
+    dspy.ChainOfThought("question -> answer, confidence"),
+    N=5, reward_fn=quality_check, threshold=1.0,
+)
+result = bon(question="...")
 ```
 
 ---
@@ -436,15 +495,19 @@ agent = dspy.ReAct("question -> answer", tools=[dspy_tool])
 
 ## 10. Special Data Types
 
+All types inherit from `dspy.Type` — subclass it to create custom multimodal types with a `format()` method.
+
 ```python
-# Images (multimodal)
+# Images (multimodal) — unified constructor (from_url/from_file are deprecated)
 class DescribeImage(dspy.Signature):
     image: dspy.Image = dspy.InputField()
     description: str = dspy.OutputField()
 
-img_from_url = dspy.Image.from_url("https://example.com/image.jpg")
-img_from_file = dspy.Image.from_file("local.png")
-img_from_b64 = dspy.Image(url="data:image/png;base64,...")
+img = dspy.Image("https://example.com/image.jpg")     # URL
+img = dspy.Image("local.png")                          # local file
+img = dspy.Image(pil_image)                            # PIL.Image
+img = dspy.Image("data:image/png;base64,...")          # data URI
+img = dspy.Image(raw_bytes)                            # bytes
 
 # Audio
 class TranscribeAudio(dspy.Signature):
@@ -452,6 +515,13 @@ class TranscribeAudio(dspy.Signature):
     transcript: str = dspy.OutputField()
 
 audio = dspy.Audio.from_file("speech.mp3")
+audio = dspy.Audio.from_url("https://example.com/audio.mp3")
+audio = dspy.Audio.from_array(numpy_array, sampling_rate=16000, format="wav")
+
+# File (3.1.0+)
+file = dspy.File.from_path("document.pdf")
+file = dspy.File.from_bytes(raw_bytes, filename="data.csv", mime_type="text/csv")
+file = dspy.File.from_file_id("file-abc123")
 
 # Conversation History
 class Chat(dspy.Signature):
@@ -463,6 +533,11 @@ history = dspy.History(messages=[
     {"role": "user", "content": "Hi"},
     {"role": "assistant", "content": "Hello!"},
 ])
+
+# ToolCalls — captures tool call results from LM outputs
+class AgentSig(dspy.Signature):
+    request: str = dspy.InputField()
+    tool_calls: dspy.ToolCalls = dspy.OutputField()
 ```
 
 ---
@@ -486,6 +561,9 @@ optimized_program.save("./my_program_dir/", save_program=True, modules_to_serial
 # Load state-only
 loaded = MyProgramClass()
 loaded.load("my_program.json")
+
+# Load full program (architecture + state) — top-level function
+loaded = dspy.load("./my_program_dir/")
 ```
 
 **Security:** `.pkl` files can execute arbitrary code on load — only load from trusted sources.
@@ -508,7 +586,7 @@ tp = dspy.MIPROv2(metric=dspy.SemanticF1(), auto="medium")
 optimized_rag = tp.compile(rag, trainset=trainset)
 ```
 
-### Classification with constraints
+### Classification with typed output
 ```python
 class Classify(dspy.Module):
     def __init__(self, classes):
@@ -519,9 +597,7 @@ class Classify(dspy.Module):
             )
         )
     def forward(self, text):
-        pred = self.predict(text=text)
-        dspy.Assert(pred.label in self.classes, f"Label must be one of {self.classes}")
-        return pred
+        return self.predict(text=text)
 ```
 
 ### Inspect LM calls
