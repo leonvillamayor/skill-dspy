@@ -1,5 +1,18 @@
 # DSPy Advanced Features: Adapters, Callbacks, Streaming, Async, Tools, MCP
 
+## Table of Contents
+- [Adapters](#adapters)
+- [Streaming](#streaming)
+- [Async Support](#async-support)
+- [Callbacks](#callbacks)
+- [Tools](#tools)
+- [MCP Integration](#mcp-model-context-protocol-integration)
+- [Inspect and Debug](#inspect-and-debug)
+- [Configuration Reference](#configuration-reference)
+- [Fine-tuning Workflow](#fine-tuning-workflow)
+
+---
+
 ## Adapters
 
 Adapters control how DSPy formats messages to/from LMs. They're usually handled automatically, but you can override them.
