@@ -9,9 +9,17 @@ Do you have labeled training data?
 ├── No → Use BestOfN or Refine (no optimization, runtime quality)
 └── Yes →
     How many examples?
-    ├── < 20 → BootstrapFewShot (fast, minimal data)
-    ├── 20-200 → MIPROv2 (auto="light") or COPRO or SIMBA
+    ├── < 10 → LabeledFewShot (simplest, just assigns demos)
+    ├── 10-50 → BootstrapFewShot (fast, minimal data)
+    ├── 50-200 → MIPROv2 (auto="light") or COPRO or SIMBA
     └── > 200 → MIPROv2 (auto="medium"/"heavy") or BootstrapFinetune
+
+    Want instruction improvement only?
+    ├── Yes → COPRO, AvatarOptimizer, or InferRules
+    └── No → MIPROv2 (instructions + demos)
+
+    Want Bayesian demo selection?
+    └── Yes → BootstrapFewShotWithOptuna (requires pip install optuna)
 
     Do you want to fine-tune model weights?
     └── Yes → BootstrapFinetune
@@ -22,9 +30,23 @@ Do you have labeled training data?
 
 ---
 
+## LabeledFewShot
+
+The simplest possible optimizer. Just assigns labeled training examples directly as demos — no bootstrapping, no evaluation.
+
+```python
+optimizer = dspy.LabeledFewShot(k=16)  # k = max demos per predictor
+optimized = optimizer.compile(program, trainset=trainset, sample=True)
+# sample=True: random k examples; sample=False: first k examples
+```
+
+**Best for:** Quick baseline, minimal setup, any data size. Use as a starting point before trying heavier optimizers.
+
+---
+
 ## BootstrapFewShot
 
-The simplest optimizer. Generates labeled demonstrations from training data using the teacher model, then selects the best ones.
+Generates labeled demonstrations from training data using the teacher model, then selects the best ones.
 
 ```python
 optimizer = dspy.BootstrapFewShot(
@@ -63,6 +85,65 @@ optimized = optimizer.compile(program, trainset=trainset, valset=devset)
 
 ---
 
+## BootstrapFewShotWithOptuna
+
+Uses Optuna Bayesian optimization to find the best demo selection. Requires `pip install optuna`.
+
+```python
+optimizer = dspy.BootstrapFewShotWithOptuna(
+    metric=my_metric,
+    max_bootstrapped_demos=4,
+    max_labeled_demos=16,
+    max_rounds=1,
+    num_candidate_programs=16,
+    num_threads=8,
+)
+optimized = optimizer.compile(program, trainset=trainset, valset=devset)
+```
+
+**Best for:** More principled demo selection than random search, uses Bayesian optimization to explore the space.
+
+---
+
+## AvatarOptimizer
+
+Iteratively improves module instructions by analyzing success/failure patterns. Compares positive (high-scoring) vs negative (low-scoring) examples, generates refined instructions.
+
+```python
+optimizer = dspy.AvatarOptimizer(
+    metric=my_metric,
+    max_iters=10,           # optimization iterations
+    lower_bound=0,          # below this score = negative example
+    upper_bound=1,          # above this score = positive example
+    max_positive_inputs=10, # max positive samples
+    max_negative_inputs=10, # max negative samples
+    optimize_for="max",     # "max" or "min"
+)
+optimized = optimizer.compile(program, trainset=trainset)
+```
+
+**Best for:** Instruction refinement when you have clear success/failure examples. Works by identifying patterns in what makes outputs succeed or fail.
+
+---
+
+## InferRules
+
+Extends BootstrapFewShot by discovering natural language rules from training examples and injecting them into predictor instructions.
+
+```python
+optimizer = dspy.InferRules(
+    num_candidates=10,     # number of candidate programs to generate
+    num_rules=10,          # number of rules to extract
+    num_threads=None,
+    teacher_settings=None,
+)
+optimized = optimizer.compile(program, trainset=trainset, valset=devset)
+```
+
+**Best for:** Tasks where explicit rules can improve performance. The optimizer discovers task-specific guidelines automatically.
+
+---
+
 ## MIPROv2 (recommended default)
 
 The most powerful general-purpose optimizer. Optimizes both instructions AND demonstrations using Bayesian optimization. Supports `auto` mode for hands-off configuration.
@@ -80,6 +161,11 @@ optimizer = dspy.MIPROv2(
     num_candidates=None,    # set by auto
     seed=42,
     verbose=False,
+    init_temperature=1.0,   # sampling temperature for instruction proposals
+    log_dir=None,           # checkpoint directory (for resuming)
+    metric_threshold=None,  # minimum metric score for accepting bootstrap examples
+    track_stats=True,       # track optimization statistics
+    max_errors=None,        # stop after this many errors
 )
 optimized = optimizer.compile(
     program,
