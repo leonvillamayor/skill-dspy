@@ -68,25 +68,9 @@ lm = dspy.LM('openai/o3-mini', model_type='responses', temperature=1.0, max_toke
 dspy.configure(lm=lm, adapter=dspy.TwoStepAdapter(dspy.LM('openai/gpt-4o-mini')))
 ```
 
-**`dspy.configure` full options:**
-```python
-dspy.configure(
-    lm=lm,
-    adapter=dspy.ChatAdapter(),            # global output adapter
-    callbacks=[...],                        # global callbacks
-    track_usage=True,                       # enable token usage tracking per prediction
-    allow_tool_async_sync_conversion=True,  # allow async tools in sync context
-    experimental=True,                      # enable experimental features (BetterTogether, BootstrapFinetune)
-    max_errors=10,                          # stop Evaluate after N errors
-)
-```
+**`dspy.configure` full options:** `lm`, `adapter` (default ChatAdapter), `callbacks`, `track_usage=True` (token tracking), `allow_tool_async_sync_conversion`, `experimental=True` (enables BetterTogether/BootstrapFinetune), `max_errors`.
 
-**Token usage tracking (requires `track_usage=True`):**
-```python
-dspy.configure(lm=dspy.LM('openai/gpt-4o-mini', cache=False), track_usage=True)
-result = my_program(question="What is DSPy?")
-print(result.get_lm_usage())   # {'openai/gpt-4o-mini': {'prompt_tokens': 120, 'completion_tokens': 45}}
-```
+**Token tracking:** `dspy.configure(lm=lm, track_usage=True)` → then `result.get_lm_usage()` returns `{'model': {'prompt_tokens': N, 'completion_tokens': N}}`.
 
 ---
 
@@ -119,67 +103,21 @@ class RAGAnswer(dspy.Signature):
 
 ### Signature manipulation
 ```python
-# Append a field at the end
 ExtendedSig = MySignature.append("new_output", dspy.OutputField(desc="..."), type_=str)
-
-# Prepend a field at the beginning
-PrependedSig = MySignature.prepend("context", dspy.InputField(desc="context"), type_=str)
-
-# Insert at specific position
-InsertedSig = MySignature.insert(1, "hint", dspy.InputField(desc="hint"), type_=str)
-
-# Delete a field
-TrimmedSig = MySignature.delete("unused_field")
-
-# Update field descriptions
 UpdatedSig = MySignature.with_updated_fields("answer", desc="detailed explanation")
-
-# Add instructions
 InstructedSig = MySignature.with_instructions("Always respond in Spanish.")
+# Also: .prepend(), .insert(pos, ...), .delete(field), .equals(other), .input_fields, .output_fields
 
-# Compare two signatures
-MySignature.equals(OtherSignature)  # compares JSON schema
-
-# Create signature programmatically (no class definition needed)
+# Create signature programmatically
 from dspy.signatures import make_signature
-DynamicSig = make_signature(
-    {"question": dspy.InputField(), "answer": dspy.OutputField()},
-    instructions="Answer the question."
-)
-
-# Access field dictionaries
-sig.input_fields   # dict of InputField instances
-sig.output_fields  # dict of OutputField instances
-sig.fields         # combined dict
+DynamicSig = make_signature({"question": dspy.InputField(), "answer": dspy.OutputField()})
 ```
 
 **Supported field types:** `str`, `int`, `float`, `bool`, `list[T]`, `dict[K,V]`, `Optional[T]`, `Union[T,U]`, `Literal[...]`, `dspy.Image`, `dspy.Audio`, `dspy.History`, `dspy.Code`, `dspy.File`, custom Pydantic models.
 
 **Field parameters:** `desc` (description), `prefix` (display name), `format` (formatter function), `parser` (output parser function), plus all Pydantic `Field` validators (`gt`, `min_length`, etc.).
 
-**`dspy.Code` — typed code output:**
-```python
-class CodeSig(dspy.Signature):
-    task: str = dspy.InputField()
-    solution: dspy.Code["python"] = dspy.OutputField()  # language-typed code
-
-predictor = dspy.Predict(CodeSig)
-result = predictor(task="Write a binary search function")
-# result.solution is a Code object with the generated python code
-```
-
-**`dspy.File` — file data in pipelines (3.1.0+):**
-```python
-class ProcessFile(dspy.Signature):
-    file: dspy.File = dspy.InputField()
-    summary: str = dspy.OutputField()
-```
-
-**`dspy.Reasoning` — capture native reasoning from reasoning models:**
-```python
-# dspy.Reasoning is a type for capturing internal chain-of-thought from reasoning models
-# (o3, DeepSeek-R1). Available as a type but ChainOfThought auto-injection was reverted in 3.1.3.
-```
+**`dspy.Code["python"]`** — typed code output field. **`dspy.File`** — file data in pipelines (3.1.0+). **`dspy.Reasoning`** — captures native reasoning from reasoning models (o3, DeepSeek-R1); auto-injection was reverted in 3.1.3. See Section 10 for full types.
 
 ---
 
@@ -226,18 +164,10 @@ results = my_module.batch(examples=[ex1, ex2, ex3], num_threads=4, return_failed
 
 **`dspy.RLM` — Recursive Language Model (3.1.1+):** Explores large contexts via sandboxed Python REPL. Requires Deno.
 ```python
-rlm = dspy.RLM(
-    signature="context, query -> answer",
-    max_iterations=20,      # maximum REPL loops
-    max_llm_calls=50,       # maximum sub-LM calls
-    sub_lm=None,            # optional cheaper model for sub-queries
-    tools=None,             # list of custom tool functions
-)
+rlm = dspy.RLM("context, query -> answer", max_iterations=20, max_llm_calls=50, sub_lm=None, tools=None)
 result = rlm(context="...very large document...", query="What is the revenue?")
-print(result.answer)
-print(result.trajectory)       # list of {code, output} steps
+print(result.answer, result.trajectory)  # trajectory = list of {code, output} steps
 ```
-Built-in REPL tools: `llm_query(prompt)`, `llm_query_batched(prompts)`, `SUBMIT(...)`. Also supports `aforward()` for async.
 
 **`dspy.PythonInterpreter` for code execution (requires Deno):**
 ```python
@@ -251,35 +181,12 @@ knn = dspy.KNN(k=3, trainset=trainset, vectorizer=dspy.Embedder('openai/text-emb
 nearest = knn(question="What is DSPy?")  # returns k nearest training examples
 ```
 
-### Usage examples
+### Quick usage
 ```python
-# Predict — basic
-predictor = dspy.Predict("question -> answer")
-result = predictor(question="What is 2+2?")
-print(result.answer)
-
-# ChainOfThought — adds step-by-step reasoning
-cot = dspy.ChainOfThought("question -> answer")
-result = cot(question="If a train travels 120km in 2h, what is its speed?")
-print(result.reasoning, result.answer)
-
-# ReAct — tool-using agent
-def search_web(query: str) -> str:
-    """Search the web for information."""
-    ...  # your implementation
-
-react = dspy.ReAct("question -> answer", tools=[search_web])
-result = react(question="Who won the 2024 Olympics marathon?")
-
-# ProgramOfThought — generates and executes Python code
-pot = dspy.ProgramOfThought("question -> answer", max_iters=3)
-result = pot(question="What is the sum of squares from 1 to 10?")
-
-# BestOfN — pick best of multiple samples
-bon = dspy.BestOfN(dspy.ChainOfThought("question -> answer"), N=5, reward_fn=my_metric)
-
-# Refine — iterative improvement
-refine = dspy.Refine(dspy.ChainOfThought("draft -> refined"), N=3, reward_fn=quality_check)
+result = dspy.Predict("question -> answer")(question="What is 2+2?")
+result = dspy.ChainOfThought("question -> answer")(question="Explain gravity")  # adds .reasoning
+result = dspy.ReAct("question -> answer", tools=[search_fn])(question="Who won?")
+result = dspy.BestOfN(dspy.ChainOfThought("q -> a"), N=5, reward_fn=metric)(q="...")
 ```
 
 ---
@@ -312,21 +219,7 @@ class MultiHopRAG(dspy.Module):
         return self.generate_answer(context=context, question=question)
 ```
 
-**Module API:**
-- `module.forward(**kwargs)` / `module.aforward(**kwargs)` — sync/async main logic
-- `module(...)` / `module.acall(...)` — sync/async calls
-- `module.named_predictors()` — iterate over all sub-predictors as (name, pred) tuples
-- `module.predictors()` — list of all Predict instances (no names)
-- `module.set_lm(lm)` / `module.get_lm()` — set/get LM (get raises ValueError if multiple)
-- `module.map_named_predictors(func)` — apply function to all predictors, returns self
-- `module.deepcopy()` — deep copy the module
-- `module.reset_copy()` — copy with reset state
-- `module.save(path)` / `module.load(path)` — persistence
-- `module.dump_state()` / `module.load_state(state)` — low-level state serialization
-- `module.named_parameters()` — all (name, param) tuples
-- `module.named_sub_modules(type_=None)` — iterate sub-modules
-- `module.inspect_history(n=1)` — per-module LM call history
-- `module.batch(examples, num_threads=...)` — parallel batch processing
+**Module API:** `forward(**kw)` / `aforward(**kw)`, `__call__` / `acall`, `named_predictors()`, `predictors()`, `set_lm(lm)` / `get_lm()`, `map_named_predictors(fn)`, `deepcopy()`, `reset_copy()`, `save(path)` / `load(path)`, `dump_state()` / `load_state(state)`, `named_parameters()`, `named_sub_modules(type_=None)`, `inspect_history(n=1)`, `batch(examples, num_threads=...)`.
 
 ---
 
@@ -341,31 +234,18 @@ example = example.with_inputs("question")
 print(example.inputs())   # {'question': ...}
 print(example.labels())   # {'answer': ...}
 
-# Additional Example methods
-example.copy(answer="updated")   # copy with overrides
-example.without("answer")        # remove keys
-example.toDict()                 # convert to dict
-example.keys(), example.values(), example.items()  # dict-like iteration
+# Also: .copy(answer="new"), .without("field"), .toDict(), .keys(), .values(), .items()
 
-# dspy.Prediction — module output container (supports arithmetic for metrics)
+# dspy.Prediction — module output
 pred = dspy.Prediction(answer="42", reasoning="step by step...")
-print(pred.answer)
-print(pred.get_lm_usage())       # token usage if track_usage=True
-pred.completions                  # raw completions property
-Prediction.from_completions(list_or_dict, signature=None)  # class method
+pred.get_lm_usage()              # token usage if track_usage=True
+pred.completions                  # raw completions
+Prediction.from_completions(list_or_dict, signature=None)
 
-# Load built-in datasets
-from dspy.datasets import HotPotQA, GSM8K, MATH, Colors, DataLoader
+# Built-in datasets (see references/evaluation.md for DataLoader, Colors, MATH, etc.)
+from dspy.datasets import HotPotQA
 hotpotqa = HotPotQA(train_seed=2024, train_size=500)
-trainset = hotpotqa.train
-devset = hotpotqa.dev
-
-# DataLoader — universal data loading
-loader = DataLoader()
-dataset = loader.from_huggingface("dataset_name", split="train")
-dataset = loader.from_csv("data.csv", fields=["question", "answer"], input_keys=["question"])
-dataset = loader.from_json("data.json")
-dataset = loader.from_parquet("data.parquet")
+trainset, devset = hotpotqa.train, hotpotqa.dev
 ```
 
 ---
@@ -495,78 +375,46 @@ agent = dspy.ReAct("question -> answer", tools=[dspy_tool])
 
 ## 10. Special Data Types
 
-All types inherit from `dspy.Type` — subclass it to create custom multimodal types with a `format()` method.
+All types inherit from `dspy.Type` — subclass it for custom multimodal types with a `format()` method.
 
 ```python
-# Images (multimodal) — unified constructor (from_url/from_file are deprecated)
-class DescribeImage(dspy.Signature):
-    image: dspy.Image = dspy.InputField()
-    description: str = dspy.OutputField()
-
-img = dspy.Image("https://example.com/image.jpg")     # URL
-img = dspy.Image("local.png")                          # local file
-img = dspy.Image(pil_image)                            # PIL.Image
-img = dspy.Image("data:image/png;base64,...")          # data URI
-img = dspy.Image(raw_bytes)                            # bytes
+# Image — unified constructor (from_url/from_file deprecated)
+img = dspy.Image("https://example.com/image.jpg")  # also: local path, PIL.Image, data URI, bytes
 
 # Audio
-class TranscribeAudio(dspy.Signature):
-    audio: dspy.Audio = dspy.InputField()
-    transcript: str = dspy.OutputField()
-
-audio = dspy.Audio.from_file("speech.mp3")
-audio = dspy.Audio.from_url("https://example.com/audio.mp3")
-audio = dspy.Audio.from_array(numpy_array, sampling_rate=16000, format="wav")
+audio = dspy.Audio.from_file("speech.mp3")          # also: .from_url(), .from_array(np, sr, fmt)
 
 # File (3.1.0+)
-file = dspy.File.from_path("document.pdf")
-file = dspy.File.from_bytes(raw_bytes, filename="data.csv", mime_type="text/csv")
-file = dspy.File.from_file_id("file-abc123")
+file = dspy.File.from_path("doc.pdf")               # also: .from_bytes(), .from_file_id()
 
-# Conversation History
-class Chat(dspy.Signature):
-    history: dspy.History = dspy.InputField()
-    message: str = dspy.InputField()
-    response: str = dspy.OutputField()
+# History — conversation context
+history = dspy.History(messages=[{"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello!"}])
 
-history = dspy.History(messages=[
-    {"role": "user", "content": "Hi"},
-    {"role": "assistant", "content": "Hello!"},
-])
-
+# Code — typed code output: dspy.Code["python"]
 # ToolCalls — captures tool call results from LM outputs
-class AgentSig(dspy.Signature):
-    request: str = dspy.InputField()
-    tool_calls: dspy.ToolCalls = dspy.OutputField()
+# Reasoning — native reasoning from o3/DeepSeek-R1 (auto-injection reverted in 3.1.3)
 ```
+
+Use in signatures: `image: dspy.Image = dspy.InputField()`, `history: dspy.History = dspy.InputField()`, etc.
 
 ---
 
 ## 11. Save & Load
 
-Two modes — state-only (recommended) vs full program:
-
 ```python
-# State-only (JSON) — saves signatures, demos, LM per predictor
+# State-only (JSON, recommended)
 optimized_program.save("my_program.json")
+loaded = MyProgramClass(); loaded.load("my_program.json")
 
-# State-only (pickle) — needed when state contains non-JSON-serializable objects (e.g., dspy.Image)
+# State-only (pickle) — for non-JSON-serializable state (e.g., dspy.Image)
 optimized_program.save("my_program.pkl", save_program=False)
 
-# Full program (architecture + state) — saves to directory via cloudpickle
+# Full program (architecture + state) — cloudpickle to directory
 optimized_program.save("./my_program_dir/", save_program=True)
-# With custom modules that need to be serialized by value:
-optimized_program.save("./my_program_dir/", save_program=True, modules_to_serialize=[my_module])
-
-# Load state-only
-loaded = MyProgramClass()
-loaded.load("my_program.json")
-
-# Load full program (architecture + state) — top-level function
 loaded = dspy.load("./my_program_dir/")
 ```
 
-**Security:** `.pkl` files can execute arbitrary code on load — only load from trusted sources.
+**Security:** `.pkl` files can execute arbitrary code — only load from trusted sources.
 
 ---
 
